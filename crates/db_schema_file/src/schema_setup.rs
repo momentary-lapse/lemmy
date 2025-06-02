@@ -8,7 +8,13 @@ use diesel::{
   dsl::exists,
   migration::{Migration, MigrationVersion},
   pg::Pg,
-  select, update, BoolExpressionMethods, Connection, ExpressionMethods, PgConnection, QueryDsl,
+  select,
+  update,
+  BoolExpressionMethods,
+  Connection,
+  ExpressionMethods,
+  PgConnection,
+  QueryDsl,
   RunQueryDsl,
 };
 use diesel_migrations::MigrationHarness;
@@ -372,8 +378,8 @@ mod tests {
     // Insert the test data
     // insert_test_data(&mut conn)?;
 
-    // Run the rest of migrations, make sure the newest migration can be redone, and check the newest
-    // down.sql file
+    // Run the rest of migrations, make sure the newest migration can be redone, and check the
+    // newest down.sql file
     assert_eq!(run(o.run().enable_diff_check())?, ReplaceableSchemaRebuilt);
 
     // Check the test data we inserted before after running migrations
