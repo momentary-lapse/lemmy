@@ -8,13 +8,7 @@ use diesel::{
   dsl::exists,
   migration::{Migration, MigrationVersion},
   pg::Pg,
-  select,
-  update,
-  BoolExpressionMethods,
-  Connection,
-  ExpressionMethods,
-  PgConnection,
-  QueryDsl,
+  select, update, BoolExpressionMethods, Connection, ExpressionMethods, PgConnection, QueryDsl,
   RunQueryDsl,
 };
 use diesel_migrations::MigrationHarness;
@@ -334,6 +328,31 @@ mod tests {
   use lemmy_utils::{error::LemmyResult, settings::SETTINGS};
   use serial_test::serial;
 
+  // The number of migrations that should be run to set up some test data.
+  // Currently, this includes the following migrations:
+  // 00000000000000_diesel_initial_setup
+  // 2019-02-26-002946_create_user
+  // 2019-02-27-170003_create_community
+  // 2019-03-03-163336_create_post
+  // 2019-03-05-233828_create_comment
+  // 2019-03-30-212058_create_post_view
+  // 2019-04-03-155205_create_community_view
+  // 2019-04-03-155309_create_comment_view
+  // 2019-04-07-003142_create_moderation_logs
+  // 2019-04-08-015947_create_user_view
+  // 2019-04-11-144915_create_mod_views
+  const INITIAL_MIGRATIONS_COUNT: u64 = 11;
+
+  // Test data IDs
+  const TEST_USER_ID_1: i32 = 101;
+  const TEST_USER_ID_2: i32 = 102;
+  const TEST_COMMUNITY_ID_1: i32 = 101;
+  const TEST_POST_ID_1: i32 = 101;
+  const TEST_COMMENT_ID_1: i32 = 101;
+  const TEST_COMMENT_ID_2: i32 = 102;
+  const TEST_COMMENT_LIKE_ID: i32 = 101;
+  const TEST_COMMENT_SAVED_ID: i32 = 101;
+
   #[test]
   #[serial]
   fn test_schema_setup() -> LemmyResult<()> {
@@ -344,9 +363,21 @@ mod tests {
     // Start with consistent state by dropping everything
     conn.batch_execute("DROP OWNED BY CURRENT_USER;")?;
 
-    // Run all migrations, make sure the newest migration can be redone, and check the newest
+    // Run initial migrations to prepare basic tables
+    assert_eq!(
+      run(o.run().limit(INITIAL_MIGRATIONS_COUNT))?,
+      ReplaceableSchemaNotRebuilt
+    );
+
+    // Insert the test data
+    // insert_test_data(&mut conn)?;
+
+    // Run the rest of migrations, make sure the newest migration can be redone, and check the newest
     // down.sql file
     assert_eq!(run(o.run().enable_diff_check())?, ReplaceableSchemaRebuilt);
+
+    // Check the test data we inserted before after running migrations
+    // check_test_data(&mut conn)?;
 
     // Check for early return
     assert_eq!(run(o.run())?, EarlyReturn);
@@ -372,6 +403,105 @@ mod tests {
     // Diesel CLI's way of running migrations shouldn't break the custom migration runner
     assert_eq!(run(o.run())?, ReplaceableSchemaRebuilt);
 
+    Ok(())
+  }
+
+  fn insert_test_data(conn: &mut PgConnection) -> LemmyResult<()> {
+    // Users
+    let user1_name = "test_user_1";
+    let user1_fedi_name = "test_user_1@fedi.example";
+    let user1_preferred_name = "preferred_1";
+    let user1_email = "email1@example.com";
+    let user1_password = "test_password_1";
+
+    conn.batch_execute(&format!(
+      "INSERT INTO user_ (id, name, fedi_name, preferred_username, password_encrypted, email) \
+          VALUES ({}, '{}', '{}', '{}', '{}', '{}')",
+      TEST_USER_ID_1,
+      user1_name,
+      user1_fedi_name,
+      user1_preferred_name,
+      user1_password,
+      user1_email
+    ))?;
+
+    let user2_name = "test_user_2";
+    let user2_fedi_name = "test_user_2@fedi.example";
+    let user2_preferred_name = "preferred2";
+    let user2_email = "email2@example.com";
+    let user2_password = "test_password_2";
+
+    conn.batch_execute(&format!(
+      "INSERT INTO user_ (id, name, fedi_name, preferred_username, password_encrypted, email) \
+          VALUES ({}, '{}', '{}', '{}', '{}', '{}')",
+      TEST_USER_ID_2,
+      user2_name,
+      user2_fedi_name,
+      user2_preferred_name,
+      user2_password,
+      user2_email
+    ))?;
+
+    // Community
+    let community_name = "test_community_1";
+    let community_title = "Test Community 1";
+    let community_description = "This is a teest community.";
+    let category_id = 4; // Should be a valid category "Movies"
+
+    conn.batch_execute(&format!(
+      "INSERT INTO community (id, name, title, description, category_id, creator_id) \
+          VALUES ({}, '{}', '{}', '{}', {}, {})",
+      TEST_COMMUNITY_ID_1,
+      community_name,
+      community_title,
+      community_description,
+      category_id,
+      TEST_USER_ID_1,
+    ))?;
+
+    // Post
+    let post_name = "Post Title";
+    let post_url = "https://fedi.example/post/12345";
+    let post_body = "Post Body.";
+
+    conn.batch_execute(&format!(
+      "INSERT INTO post (id, name, url, body, creator_id, community_id) \
+          VALUES ({}, '{}', '{}, '{}', {}, {})",
+      TEST_POST_ID_1, post_name, post_url, post_body, TEST_USER_ID_1, TEST_COMMUNITY_ID_1
+    ))?;
+
+    // Comment
+    let comment1_content = "Comment";
+    let comment2_content = "Reply";
+
+    conn.batch_execute(&format!(
+      "INSERT INTO comment (id, creator_id, post_id, parent_id, content) \
+           VALUES ({}, {}, {}, NULL, '{}')",
+      TEST_COMMENT_ID_1, TEST_USER_ID_2, TEST_POST_ID_1, comment1_content
+    ))?;
+
+    conn.batch_execute(&format!(
+      "INSERT INTO comment (id, creator_id, post_id, parent_id, content) \
+           VALUES ({}, {}, {}, {}, '{}')",
+      TEST_COMMENT_ID_2, TEST_USER_ID_1, TEST_POST_ID_1, TEST_COMMENT_ID_1, comment2_content
+    ))?;
+
+    conn.batch_execute(&format!(
+      "INSERT INTO comment_like (id, user_id, comment_id, post_id, score) \
+           VALUES ({}, {}, {}, {}, {})",
+      TEST_COMMENT_LIKE_ID, TEST_USER_ID_1, TEST_COMMENT_ID_1, TEST_POST_ID_1, 1
+    ))?;
+
+    conn.batch_execute(&format!(
+      "INSERT INTO comment_saved (id, user_id, comment_id) \
+           VALUES ({}, {}, {})",
+      TEST_COMMENT_SAVED_ID, TEST_USER_ID_1, TEST_COMMENT_ID_1
+    ))?;
+
+    Ok(())
+  }
+
+  fn check_test_data(conn: &mut PgConnection) -> LemmyResult<()> {
     Ok(())
   }
 }
