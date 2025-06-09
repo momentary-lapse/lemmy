@@ -8,13 +8,7 @@ use diesel::{
   dsl::exists,
   migration::{Migration, MigrationVersion},
   pg::Pg,
-  select,
-  update,
-  BoolExpressionMethods,
-  Connection,
-  ExpressionMethods,
-  PgConnection,
-  QueryDsl,
+  select, update, BoolExpressionMethods, Connection, ExpressionMethods, PgConnection, QueryDsl,
   RunQueryDsl,
 };
 use diesel_migrations::MigrationHarness;
@@ -335,19 +329,10 @@ mod tests {
   use serial_test::serial;
 
   // The number of migrations that should be run to set up some test data.
-  // Currently, this includes the following migrations:
-  // 00000000000000_diesel_initial_setup
-  // 2019-02-26-002946_create_user
-  // 2019-02-27-170003_create_community
-  // 2019-03-03-163336_create_post
-  // 2019-03-05-233828_create_comment
-  // 2019-03-30-212058_create_post_view
-  // 2019-04-03-155205_create_community_view
-  // 2019-04-03-155309_create_comment_view
-  // 2019-04-07-003142_create_moderation_logs
-  // 2019-04-08-015947_create_user_view
-  // 2019-04-11-144915_create_mod_views
-  const INITIAL_MIGRATIONS_COUNT: u64 = 11;
+  // Currently, this includes migrations until 2020-04-07-135912_add_user_community_apub_constraints,
+  // since there are some mandatory apub fields need to be added.
+
+  const INITIAL_MIGRATIONS_COUNT: u64 = 40;
 
   // Test data IDs
   const TEST_USER_ID_1: i32 = 101;
@@ -376,14 +361,19 @@ mod tests {
     );
 
     // Insert the test data
-    // insert_test_data(&mut conn)?;
+    insert_test_data(&mut conn)?;
+
+    assert_eq!(
+      run(o.run().limit(85))?,
+      ReplaceableSchemaNotRebuilt
+    );
+
+    // Check the test data we inserted before after running migrations
+    check_test_data(&mut conn)?;
 
     // Run the rest of migrations, make sure the newest migration can be redone, and check the
     // newest down.sql file
     assert_eq!(run(o.run().enable_diff_check())?, ReplaceableSchemaRebuilt);
-
-    // Check the test data we inserted before after running migrations
-    // check_test_data(&mut conn)?;
 
     // Check for early return
     assert_eq!(run(o.run())?, EarlyReturn);
@@ -415,81 +405,91 @@ mod tests {
   fn insert_test_data(conn: &mut PgConnection) -> LemmyResult<()> {
     // Users
     let user1_name = "test_user_1";
-    let user1_fedi_name = "test_user_1@fedi.example";
+    let user1_actor_id = "test_user_1@fedi.example";
     let user1_preferred_name = "preferred_1";
     let user1_email = "email1@example.com";
     let user1_password = "test_password_1";
+    let user1_public_key = "test_public_key_1";
 
     conn.batch_execute(&format!(
-      "INSERT INTO user_ (id, name, fedi_name, preferred_username, password_encrypted, email) \
-          VALUES ({}, '{}', '{}', '{}', '{}', '{}')",
+      "INSERT INTO user_ (id, name, actor_id, preferred_username, password_encrypted, email, public_key) \
+          VALUES ({}, '{}', '{}', '{}', '{}', '{}', '{}')",
       TEST_USER_ID_1,
       user1_name,
-      user1_fedi_name,
+      user1_actor_id,
       user1_preferred_name,
       user1_password,
-      user1_email
+      user1_email,
+      user1_public_key
     ))?;
 
     let user2_name = "test_user_2";
-    let user2_fedi_name = "test_user_2@fedi.example";
+    let user2_actor_id = "test_user_2@fedi.example";
     let user2_preferred_name = "preferred2";
     let user2_email = "email2@example.com";
     let user2_password = "test_password_2";
+    let user2_public_key = "test_public_key_2";
 
     conn.batch_execute(&format!(
-      "INSERT INTO user_ (id, name, fedi_name, preferred_username, password_encrypted, email) \
-          VALUES ({}, '{}', '{}', '{}', '{}', '{}')",
+      "INSERT INTO user_ (id, name, actor_id, preferred_username, password_encrypted, email, public_key) \
+          VALUES ({}, '{}', '{}', '{}', '{}', '{}', '{}')",
       TEST_USER_ID_2,
       user2_name,
-      user2_fedi_name,
+      user2_actor_id,
       user2_preferred_name,
       user2_password,
-      user2_email
+      user2_email,
+      user2_public_key
     ))?;
 
     // Community
     let community_name = "test_community_1";
     let community_title = "Test Community 1";
-    let community_description = "This is a teest community.";
+    let community_description = "This is a test community.";
     let category_id = 4; // Should be a valid category "Movies"
+    let community_actor_id = "https://fedi.example/community/12345";
 
     conn.batch_execute(&format!(
-      "INSERT INTO community (id, name, title, description, category_id, creator_id) \
-          VALUES ({}, '{}', '{}', '{}', {}, {})",
+      "INSERT INTO community (id, actor_id, name, title, description, category_id, creator_id) \
+          VALUES ({}, '{}', '{}', '{}', '{}', {}, {})",
       TEST_COMMUNITY_ID_1,
+      community_actor_id,
       community_name,
       community_title,
       community_description,
       category_id,
-      TEST_USER_ID_1,
+      TEST_USER_ID_1
     ))?;
 
     // Post
     let post_name = "Post Title";
     let post_url = "https://fedi.example/post/12345";
     let post_body = "Post Body.";
+    let post_ap_id = "https://fedi.example/post/12345";
 
     conn.batch_execute(&format!(
-      "INSERT INTO post (id, name, url, body, creator_id, community_id) \
-          VALUES ({}, '{}', '{}, '{}', {}, {})",
-      TEST_POST_ID_1, post_name, post_url, post_body, TEST_USER_ID_1, TEST_COMMUNITY_ID_1
+      "INSERT INTO post (id, name, url, body, creator_id, community_id, ap_id) \
+          VALUES ({}, '{}', '{}', '{}', {}, {}, '{}')",
+      TEST_POST_ID_1, post_name, post_url, post_body, TEST_USER_ID_1, TEST_COMMUNITY_ID_1, post_ap_id
     ))?;
 
     // Comment
     let comment1_content = "Comment";
+    let comment1_ap_id = "https://fedi.example/comment/12345";
+
     let comment2_content = "Reply";
+    let comment2_ap_id = "https://fedi.example/comment/12346";
 
     conn.batch_execute(&format!(
-      "INSERT INTO comment (id, creator_id, post_id, parent_id, content) \
-           VALUES ({}, {}, {}, NULL, '{}')",
-      TEST_COMMENT_ID_1, TEST_USER_ID_2, TEST_POST_ID_1, comment1_content
+      "INSERT INTO comment (id, creator_id, post_id, parent_id, content, ap_id) \
+           VALUES ({}, {}, {}, NULL, '{}', '{}')",
+      TEST_COMMENT_ID_1, TEST_USER_ID_2, TEST_POST_ID_1, comment1_content, comment1_ap_id
     ))?;
 
     conn.batch_execute(&format!(
-      "INSERT INTO comment (id, creator_id, post_id, parent_id, content) \
-           VALUES ({}, {}, {}, {}, '{}')",
-      TEST_COMMENT_ID_2, TEST_USER_ID_1, TEST_POST_ID_1, TEST_COMMENT_ID_1, comment2_content
+      "INSERT INTO comment (id, creator_id, post_id, parent_id, content, ap_id) \
+           VALUES ({}, {}, {}, {}, '{}', '{}')",
+      TEST_COMMENT_ID_2, TEST_USER_ID_1, TEST_POST_ID_1, TEST_COMMENT_ID_1, comment2_content, comment2_ap_id
     ))?;
 
     conn.batch_execute(&format!(
@@ -508,6 +508,101 @@ mod tests {
   }
 
   fn check_test_data(conn: &mut PgConnection) -> LemmyResult<()> {
+    use crate::schema::{comment, community, person, post};
+
+    // Select and print all users, communities, posts, and comments
+    println!("Checking test data...");
+    println!("Users:");
+    let users: Vec<(i32, String)> = person::table
+      .select((person::id, person::name))
+      .load(conn)
+      .map_err(|e| anyhow!("Failed to read users: {}", e))?;
+    for (id, name) in users {
+      println!("User ID: {}, Name: {}", id, name);
+    }
+    println!("Communities:");
+    let communities: Vec<(i32, String)> = community::table
+      .select((community::id, community::name))
+      .load(conn)
+      .map_err(|e| anyhow!("Failed to read communities: {}", e))?;
+    for (id, name) in communities {
+      println!("Community ID: {}, Name: {}", id, name);
+    }
+    println!("Posts:");
+    let posts: Vec<(i32, String)> = post::table
+      .select((post::id, post::name))
+      .load(conn)
+      .map_err(|e| anyhow!("Failed to read posts: {}", e))?;
+    for (id, name) in posts {
+      println!("Post ID: {}, Name: {}", id, name);
+    }
+    println!("Comments:");
+    let comments: Vec<(i32, String)> = comment::table
+      .select((comment::id, comment::content))
+      .load(conn)
+      .map_err(|e| anyhow!("Failed to read comments: {}", e))?;
+    for (id, content) in comments {
+      println!("Comment ID: {}, Content: {}", id, content);
+    }
+
+    // Check users
+    person::table
+      .find(TEST_USER_ID_1)
+      .select(person::id) // Select the ID column
+      .first::<i32>(conn) // Expect an i32, will error if not found
+      .map_err(|e| anyhow!("Failed to read user 1 (id: {}): {}", TEST_USER_ID_1, e))?;
+
+    person::table
+      .find(TEST_USER_ID_2)
+      .select(person::id)
+      .first::<i32>(conn)
+      .map_err(|e| anyhow!("Failed to read user 2 (id: {}): {}", TEST_USER_ID_2, e))?;
+
+    // Check community
+    community::table
+      .find(TEST_COMMUNITY_ID_1)
+      .select(community::id)
+      .first::<i32>(conn)
+      .map_err(|e| {
+        anyhow!(
+          "Failed to read community (id: {}): {}",
+          TEST_COMMUNITY_ID_1,
+          e
+        )
+      })?;
+
+    // Check post
+    post::table
+      .find(TEST_POST_ID_1)
+      .select(post::id)
+      .first::<i32>(conn)
+      .map_err(|e| anyhow!("Failed to read post (id: {}): {}", TEST_POST_ID_1, e))?;
+
+    // Check comments
+    comment::table
+      .find(TEST_COMMENT_ID_1)
+      .select(comment::id)
+      .first::<i32>(conn)
+      .map_err(|e| {
+        anyhow!(
+          "Failed to read comment 1 (id: {}): {}",
+          TEST_COMMENT_ID_1,
+          e
+        )
+      })?;
+
+    comment::table
+      .find(TEST_COMMENT_ID_2)
+      .select(comment::id)
+      .first::<i32>(conn)
+      .map_err(|e| {
+        anyhow!(
+          "Failed to read comment 2 (id: {}): {}",
+          TEST_COMMENT_ID_2,
+          e
+        )
+      })?;
+
     Ok(())
   }
 }
